@@ -56,11 +56,44 @@ async function loadSessionsFromDB(): Promise<string[]> {
     .filter(Boolean);
 }
 
+const CLOUDFLARE_PROXY_URL = process.env.CLOUDFLARE_PROXY_URL;
+const CLOUDFLARE_PROXY_SECRET = process.env.CLOUDFLARE_PROXY_SECRET;
+
+async function tryViaProxy(
+  cardNumber: string,
+  pin: string,
+  cookieStr: string
+): Promise<{ success: boolean; balance?: number; expiry?: string; error?: string } | null> {
+  if (!CLOUDFLARE_PROXY_URL || !CLOUDFLARE_PROXY_SECRET) return null;
+  try {
+    const res = await fetch(CLOUDFLARE_PROXY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${CLOUDFLARE_PROXY_SECRET}`,
+      },
+      body: JSON.stringify({ cardNumber, pin, cookieStr }),
+      signal: AbortSignal.timeout(25000),
+    });
+    const data = await res.json();
+    if (data.success !== undefined) return data;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function tryWithSession(
   cardNumber: string,
   pin: string,
   cookieStr: string
 ): Promise<{ success: boolean; balance?: number; expiry?: string; error?: string } | null> {
+  // Use Cloudflare proxy if configured (for deployed environments)
+  if (CLOUDFLARE_PROXY_URL) {
+    return tryViaProxy(cardNumber, pin, cookieStr);
+  }
+
+  // Direct call (works from localhost)
   for (const url of FLIPKART_DCS) {
     try {
       const res = await fetch(url, {
