@@ -1,36 +1,74 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gift Card Manager
 
-## Getting Started
+Manage Flipkart GCs, Amazon Pay & Amazon Shopping Vouchers — store, track balances, import/export CSV, auto-check Flipkart balances. Data stored in Supabase, accessible from any device.
 
-First, run the development server:
+## Features
+
+- **Multi-provider** — Flipkart GC, Amazon Pay Voucher, Amazon Shopping Voucher
+- **Dashboard** — Per-type balance breakdown, status tiles with click-to-filter
+- **Auto Balance Check** — Flipkart GCs checked via Rome API with session cookies
+- **Session Manager** — Add/remove Flipkart sessions from within the app
+- **Bulk Import/Export** — CSV with card type support
+- **Search & Filter** — By type, status, keyword
+- **Cloud Storage** — Supabase Postgres, works from any device
+- **Deploy to Vercel** — Free hosting with zero config
+
+## Quick Start (Local Dev)
 
 ```bash
+npm install
+cp .env.example .env.local
+# Edit .env.local with your Supabase credentials
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Setup Supabase
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Go to [supabase.com](https://supabase.com) and create a project (or use existing)
+2. Open **SQL Editor** and run the contents of `supabase/migration.sql`
+3. Go to **Settings → API** and copy:
+   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
+   - Service Role Key → `SUPABASE_SERVICE_ROLE_KEY`
+4. Paste into `.env.local`
 
-## Learn More
+## Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+### Option 1: GitHub + Vercel Dashboard
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+git add .
+git commit -m "ready for deploy"
+git push origin main
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Then go to [vercel.com/new](https://vercel.com/new), import the repo, add env vars, deploy.
 
-## Deploy on Vercel
+### Option 2: Vercel CLI
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm i -g vercel
+vercel
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Add environment variables when prompted or via Vercel dashboard:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+## Adding Flipkart Sessions
+
+1. Install **Cookie-Editor** browser extension
+2. Log in to flipkart.com
+3. Click Cookie-Editor → Export → JSON
+4. In the app, click the session indicator (top-right) → Paste JSON → Add
+
+Sessions last 7-14 days. Add multiple accounts for redundancy.
+
+## Tech Stack
+
+- **Next.js 16** (App Router, Turbopack)
+- **TypeScript**
+- **Tailwind CSS v4**
+- **Supabase** (Postgres)
+- **Vercel** (hosting)
