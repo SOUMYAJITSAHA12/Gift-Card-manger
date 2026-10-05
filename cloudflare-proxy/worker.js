@@ -2,10 +2,91 @@
 // Deploy this to Cloudflare Workers (free tier: 100K requests/day)
 // It proxies balance check requests through Cloudflare's edge network
 
-const FLIPKART_DCS = [
-  "https://1.rome.api.flipkart.com/api/1/egv/balance",
-  "https://2.rome.api.flipkart.com/api/1/egv/balance",
-];
+const BALANCE_PATH = "/api/1/egv/balance";
+
+function dcUrl(id) {
+  return `https://${id}.rome.api.flipkart.com${BALANCE_PATH}`;
+}
+
+async function queryFlipkart(cardNumber, pin, cookieStr) {
+  const queue = [dcUrl("1"), dcUrl("2")];
+  const tried = new Set();
+  let lastError = "All DCs failed";
+
+  while (queue.length > 0 && tried.size < 4) {
+    const url = queue.shift();
+    if (tried.has(url)) continue;
+    tried.add(url);
+
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        redirect: "manual",
+        headers: { ...FK_HEADERS, Cookie: cookieStr },
+        body: JSON.stringify({ cardNumber, pin }),
+      });
+    } catch (err) {
+      lastError = err?.message || "Could not reach Flipkart";
+      continue;
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("Location");
+      if (location && !tried.has(location)) queue.unshift(location);
+      lastError = `Flipkart redirected (HTTP ${res.status})`;
+      continue;
+    }
+
+    if (res.status === 500) {
+      return { success: false, error: "Card is expired or deactivated" };
+    }
+
+    const raw = await res.text();
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      lastError = `Flipkart returned HTTP ${res.status}`;
+      continue;
+    }
+
+    const nextId = data.RESPONSE?.id != null ? String(data.RESPONSE.id) : "";
+    if ((data.ERROR_CODE === 2000 || res.status === 406) && /^\d+$/.test(nextId)) {
+      const nextUrl = dcUrl(nextId);
+      if (!tried.has(nextUrl)) queue.unshift(nextUrl);
+      lastError = data.ERROR_MESSAGE || `Wrong data center, retrying DC ${nextId}`;
+      continue;
+    }
+
+    if (res.status === 401) {
+      return { success: false, error: "Session expired" };
+    }
+
+    if (data.RESPONSE?.statusCode === "SUCCESS" && data.RESPONSE.balanceAmount !== undefined) {
+      const expiry = data.RESPONSE.expiryDate
+        ? new Date(data.RESPONSE.expiryDate).toISOString().slice(0, 10)
+        : null;
+      return { success: true, balance: data.RESPONSE.balanceAmount, expiry };
+    }
+
+    if (data.RESPONSE?.message?.toLowerCase().includes("zero balance")) {
+      return { success: true, balance: 0 };
+    }
+
+    if (data.RESPONSE?.message && data.RESPONSE.message !== "SUCCESS") {
+      return { success: false, error: `Flipkart: ${data.RESPONSE.message}` };
+    }
+
+    if (data.ERROR_MESSAGE) {
+      return { success: false, error: data.ERROR_MESSAGE };
+    }
+
+    lastError = `Unexpected Flipkart response (HTTP ${res.status})`;
+  }
+
+  return { success: false, error: lastError };
+}
 
 const FK_HEADERS = {
   "Content-Type": "application/json",
@@ -51,78 +132,8 @@ export default {
         );
       }
 
-      for (const url of FLIPKART_DCS) {
-        try {
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { ...FK_HEADERS, Cookie: cookieStr },
-            body: JSON.stringify({ cardNumber, pin }),
-          });
-
-          if (res.status === 500) {
-            return Response.json(
-              { success: false, error: "Card is expired or deactivated" },
-              { headers: corsHeaders }
-            );
-          }
-
-          const data = await res.json();
-
-          // DC mismatch — try next
-          if (data.ERROR_CODE === 2000 || (res.status === 406 && data.RESPONSE?.dc)) {
-            continue;
-          }
-
-          // Session expired
-          if (res.status === 401) {
-            return Response.json(
-              { success: false, error: "Session expired" },
-              { headers: corsHeaders }
-            );
-          }
-
-          // Success
-          if (data.RESPONSE?.statusCode === "SUCCESS" && data.RESPONSE.balanceAmount !== undefined) {
-            const expiry = data.RESPONSE.expiryDate
-              ? new Date(data.RESPONSE.expiryDate).toISOString().slice(0, 10)
-              : null;
-            return Response.json(
-              { success: true, balance: data.RESPONSE.balanceAmount, expiry },
-              { headers: corsHeaders }
-            );
-          }
-
-          // Zero balance
-          if (data.RESPONSE?.message?.toLowerCase().includes("zero balance")) {
-            return Response.json(
-              { success: true, balance: 0 },
-              { headers: corsHeaders }
-            );
-          }
-
-          // Error from Flipkart
-          if (data.RESPONSE?.message && data.RESPONSE.message !== "SUCCESS") {
-            return Response.json(
-              { success: false, error: `Flipkart: ${data.RESPONSE.message}` },
-              { headers: corsHeaders }
-            );
-          }
-
-          if (data.ERROR_MESSAGE) {
-            return Response.json(
-              { success: false, error: data.ERROR_MESSAGE },
-              { headers: corsHeaders }
-            );
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return Response.json(
-        { success: false, error: "All DCs failed" },
-        { headers: corsHeaders }
-      );
+      const result = await queryFlipkart(cardNumber, pin, cookieStr);
+      return Response.json(result, { headers: corsHeaders });
     } catch (err) {
       return Response.json(
         { success: false, error: err.message || "Worker error" },

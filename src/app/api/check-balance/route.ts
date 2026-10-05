@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-const FLIPKART_DCS = [
-  "https://1.rome.api.flipkart.com/api/1/egv/balance",
-  "https://2.rome.api.flipkart.com/api/1/egv/balance",
-];
+const BALANCE_PATH = "/api/1/egv/balance";
+
+function dcUrl(id: string): string {
+  return `https://${id}.rome.api.flipkart.com${BALANCE_PATH}`;
+}
+
+export const runtime = "nodejs";
+export const preferredRegion = "bom1";
 
 const FK_HEADERS = {
   "Content-Type": "application/json",
@@ -30,7 +34,7 @@ interface FlipkartResponse {
     expiryDate?: number;
     message?: string;
     statusCode?: string;
-    id?: string;
+    id?: string | number;
     dc?: string;
   };
   ERROR_MESSAGE?: string;
@@ -83,25 +87,55 @@ async function tryViaProxy(
   }
 }
 
-async function tryWithSession(
+type BalanceResult = {
+  success: boolean;
+  balance?: number;
+  expiry?: string;
+  error?: string;
+};
+
+function proxyShouldFallBack(result: BalanceResult | null): boolean {
+  if (!result) return true;
+  if (result.success) return false;
+  const error = result.error ?? "";
+  return (
+    error === "All DCs failed" ||
+    error === "Session expired" ||
+    error.startsWith("Wrong data center") ||
+    error.startsWith("Flipkart redirected") ||
+    error.startsWith("Flipkart returned HTTP") ||
+    error.startsWith("Could not reach") ||
+    error.startsWith("Unexpected Flipkart response")
+  );
+}
+
+async function tryDirect(
   cardNumber: string,
   pin: string,
   cookieStr: string
-): Promise<{ success: boolean; balance?: number; expiry?: string; error?: string } | null> {
-  // Use Cloudflare proxy if configured (for deployed environments)
-  if (CLOUDFLARE_PROXY_URL) {
-    return tryViaProxy(cardNumber, pin, cookieStr);
-  }
+): Promise<BalanceResult | null> {
+  const queue = [dcUrl("1"), dcUrl("2")];
+  const tried = new Set<string>();
 
-  // Direct call (works from localhost)
-  for (const url of FLIPKART_DCS) {
+  while (queue.length > 0 && tried.size < 4) {
+    const url = queue.shift();
+    if (!url || tried.has(url)) continue;
+    tried.add(url);
+
     try {
       const res = await fetch(url, {
         method: "POST",
+        redirect: "manual",
         headers: { ...FK_HEADERS, Cookie: cookieStr },
         body: JSON.stringify({ cardNumber, pin }),
         signal: AbortSignal.timeout(20000),
       });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("Location");
+        if (location && !tried.has(location)) queue.unshift(location);
+        continue;
+      }
 
       if (res.status === 500) {
         return {
@@ -111,8 +145,10 @@ async function tryWithSession(
       }
 
       const data: FlipkartResponse = await res.json();
-
-      if (data.ERROR_CODE === 2000 || (res.status === 406 && data.RESPONSE?.dc)) {
+      const nextId = data.RESPONSE?.id != null ? String(data.RESPONSE.id) : "";
+      if ((data.ERROR_CODE === 2000 || res.status === 406) && /^\d+$/.test(nextId)) {
+        const nextUrl = dcUrl(nextId);
+        if (!tried.has(nextUrl)) queue.unshift(nextUrl);
         continue;
       }
 
@@ -150,7 +186,22 @@ async function tryWithSession(
       continue;
     }
   }
-  return null;
+
+  return { success: false, error: "All DCs failed" };
+}
+
+async function tryWithSession(
+  cardNumber: string,
+  pin: string,
+  cookieStr: string
+): Promise<BalanceResult | null> {
+  if (CLOUDFLARE_PROXY_URL) {
+    const proxied = await tryViaProxy(cardNumber, pin, cookieStr);
+    if (proxied?.success) return proxied;
+    if (!proxyShouldFallBack(proxied)) return proxied;
+  }
+
+  return tryDirect(cardNumber, pin, cookieStr);
 }
 
 export async function POST(request: NextRequest) {
