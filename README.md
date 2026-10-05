@@ -56,6 +56,24 @@ Add environment variables when prompted or via Vercel dashboard:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+## Balance Checks Run On A Home Machine
+
+Flipkart answers home internet connections but returns HTTP 529 to cloud hosts,
+so the deployed site cannot call Flipkart itself. Instead it queues the check in
+Supabase and a script on a home machine picks it up:
+
+```bash
+npm run home-checker
+```
+
+Leave that window open. It polls Supabase, calls Flipkart over your home
+connection, and writes balances back. Because it only makes outbound requests,
+you need no tunnel, no open port, and no extra software.
+
+With it running, the refresh button works from any device, including a phone on
+mobile data. With it stopped, the site still shows stored balances and tells you
+to start the checker when you try to refresh.
+
 ## Adding Flipkart Sessions
 
 1. Install **Cookie-Editor** browser extension

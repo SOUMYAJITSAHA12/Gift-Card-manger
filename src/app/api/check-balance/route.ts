@@ -106,6 +106,17 @@ async function loadSessionsFromDB(): Promise<string[]> {
 const CLOUDFLARE_PROXY_URL = process.env.CLOUDFLARE_PROXY_URL;
 const CLOUDFLARE_PROXY_SECRET = process.env.CLOUDFLARE_PROXY_SECRET;
 const HEARTBEAT_MAX_AGE_MS = 45000;
+const CLOUD_BLOCK = /^(All DCs failed|Flipkart returned HTTP|Unexpected Flipkart response|Could not reach|fetch failed|Flipkart redirected)/i;
+
+function explainIfCloudBlocked(result: BalanceResult): BalanceResult {
+  if (result.success || !CLOUD_BLOCK.test(result.error ?? "")) return result;
+
+  return {
+    ...result,
+    error:
+      "Flipkart blocks balance checks from the cloud. Start the home checker (npm run home-checker) on your home machine, then try again.",
+  };
+}
 
 async function homeCheckerIsAlive(): Promise<boolean> {
   const { data, error } = await supabase
@@ -337,7 +348,7 @@ export async function POST(request: NextRequest) {
       const result = await tryWithSession(cleanCard, cleanPin, cookieStr);
       if (result) {
         return NextResponse.json(
-          { ...result, cardNumber: cleanCard },
+          { ...explainIfCloudBlocked(result), cardNumber: cleanCard },
           { headers: corsHeaders(request) }
         );
       }
