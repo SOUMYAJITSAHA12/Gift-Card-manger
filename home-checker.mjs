@@ -18,7 +18,20 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// A request that never settles would stall the poll loop, stopping the
+// heartbeat without printing anything, so the hosted site would report that no
+// home machine is running. Bound every call instead.
+const SUPABASE_TIMEOUT_MS = 15000;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  global: {
+    fetch: (input, init = {}) =>
+      fetch(input, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(SUPABASE_TIMEOUT_MS),
+      }),
+  },
+});
 
 const BALANCE_PATH = "/api/1/egv/balance";
 const dcUrl = (id) => `https://${id}.rome.api.flipkart.com${BALANCE_PATH}`;
