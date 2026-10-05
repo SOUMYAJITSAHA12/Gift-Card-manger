@@ -10,6 +10,20 @@ function dcUrl(id: string): string {
 export const runtime = "nodejs";
 export const preferredRegion = "bom1";
 
+function corsHeaders(request: NextRequest): HeadersInit {
+  return {
+    "Access-Control-Allow-Origin": request.headers.get("origin") ?? "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Private-Network": "true",
+    Vary: "Origin",
+  };
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
+}
+
 const FK_HEADERS = {
   "Content-Type": "application/json",
   Accept: "application/json",
@@ -116,6 +130,7 @@ async function tryDirect(
 ): Promise<BalanceResult | null> {
   const queue = [dcUrl("1"), dcUrl("2")];
   const tried = new Set<string>();
+  let lastError = "All DCs failed";
 
   while (queue.length > 0 && tried.size < 4) {
     const url = queue.shift();
@@ -134,6 +149,7 @@ async function tryDirect(
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("Location");
         if (location && !tried.has(location)) queue.unshift(location);
+        lastError = `Flipkart redirected (HTTP ${res.status})`;
         continue;
       }
 
@@ -144,11 +160,20 @@ async function tryDirect(
         };
       }
 
-      const data: FlipkartResponse = await res.json();
+      const raw = await res.text();
+      let data: FlipkartResponse;
+      try {
+        data = JSON.parse(raw) as FlipkartResponse;
+      } catch {
+        lastError = `Flipkart returned HTTP ${res.status}`;
+        continue;
+      }
+
       const nextId = data.RESPONSE?.id != null ? String(data.RESPONSE.id) : "";
       if ((data.ERROR_CODE === 2000 || res.status === 406) && /^\d+$/.test(nextId)) {
         const nextUrl = dcUrl(nextId);
         if (!tried.has(nextUrl)) queue.unshift(nextUrl);
+        lastError = data.ERROR_MESSAGE || `Wrong data center ${nextId}`;
         continue;
       }
 
@@ -182,12 +207,13 @@ async function tryDirect(
       if (data.ERROR_MESSAGE) {
         return { success: false, error: data.ERROR_MESSAGE };
       }
-    } catch {
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err.message : "Could not reach Flipkart";
       continue;
     }
   }
 
-  return { success: false, error: "All DCs failed" };
+  return { success: false, error: lastError };
 }
 
 async function tryWithSession(
@@ -212,7 +238,7 @@ export async function POST(request: NextRequest) {
     if (!cardNumber || !pin) {
       return NextResponse.json(
         { success: false, error: "Card number and PIN are required" },
-        { status: 400 }
+        { status: 400, headers: corsHeaders(request) }
       );
     }
 
@@ -222,33 +248,42 @@ export async function POST(request: NextRequest) {
     const sessions = await loadSessionsFromDB();
 
     if (sessions.length === 0) {
-      return NextResponse.json({
-        success: false,
-        cardNumber: cleanCard,
-        error:
-          "No Flipkart sessions found. Add sessions via the Session Manager.",
-      });
+      return NextResponse.json(
+        {
+          success: false,
+          cardNumber: cleanCard,
+          error:
+            "No Flipkart sessions found. Add sessions via the Session Manager.",
+        },
+        { headers: corsHeaders(request) }
+      );
     }
 
     for (const cookieStr of sessions) {
       const result = await tryWithSession(cleanCard, cleanPin, cookieStr);
       if (result) {
-        return NextResponse.json({ ...result, cardNumber: cleanCard });
+        return NextResponse.json(
+          { ...result, cardNumber: cleanCard },
+          { headers: corsHeaders(request) }
+        );
       }
     }
 
-    return NextResponse.json({
-      success: false,
-      cardNumber: cleanCard,
-      error:
-        "All sessions expired or failed. Add fresh sessions via the Session Manager.",
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        cardNumber: cleanCard,
+        error:
+          "All sessions expired or failed. Add fresh sessions via the Session Manager.",
+      },
+      { headers: corsHeaders(request) }
+    );
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Unknown error occurred";
     return NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: 500, headers: corsHeaders(request) }
     );
   }
 }
