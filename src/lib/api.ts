@@ -40,41 +40,16 @@ export async function deleteCards(ids: string[]): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete cards");
 }
 
-async function postBalance(
-  url: string,
+export async function checkBalance(
   cardNumber: string,
   pin: string
 ): Promise<BalanceCheckResult> {
-  const res = await fetch(url, {
+  const res = await fetch("/api/check-balance", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cardNumber, pin }),
   });
   return res.json();
-}
-
-export async function checkBalance(
-  cardNumber: string,
-  pin: string
-): Promise<BalanceCheckResult> {
-  const onLocalPage =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1");
-
-  if (!onLocalPage) {
-    try {
-      return await postBalance(
-        "http://127.0.0.1:3000/api/check-balance",
-        cardNumber,
-        pin
-      );
-    } catch {
-      // The local app is not running on this computer.
-    }
-  }
-
-  return postBalance("/api/check-balance", cardNumber, pin);
 }
 
 export function computeStats(cards: GiftCard[]): DashboardStats {
