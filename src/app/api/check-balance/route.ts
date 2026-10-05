@@ -130,18 +130,32 @@ async function homeCheckerIsAlive(): Promise<boolean> {
   return Number.isFinite(beat) && Date.now() - beat < HEARTBEAT_MAX_AGE_MS;
 }
 
-async function queueHomeJob(cardNumber: string): Promise<string | null> {
-  const { data: card } = await supabase
+async function findCardId(cardNumber: string): Promise<string | null> {
+  const { data: exact } = await supabase
     .from("cards")
     .select("id")
     .eq("card_number", cardNumber)
     .maybeSingle();
 
-  if (!card) return null;
+  if (exact) return exact.id;
+
+  // Cards saved before numbers were normalized still carry the typed spacing.
+  const { data: rows } = await supabase.from("cards").select("id, card_number");
+  const match = rows?.find(
+    (row) => String(row.card_number ?? "").replace(/\s+/g, "") === cardNumber
+  );
+
+  return match?.id ?? null;
+}
+
+async function queueHomeJob(cardNumber: string): Promise<string | null> {
+  const cardId = await findCardId(cardNumber);
+
+  if (!cardId) return null;
 
   const { data: job, error } = await supabase
     .from("balance_jobs")
-    .insert({ card_id: card.id, status: "pending" })
+    .insert({ card_id: cardId, status: "pending" })
     .select("id")
     .single();
 
@@ -328,6 +342,16 @@ export async function POST(request: NextRequest) {
           { headers: corsHeaders(request) }
         );
       }
+
+      return NextResponse.json(
+        {
+          success: false,
+          cardNumber: cleanCard,
+          error:
+            "This card is not saved in the library, so the home machine cannot check it.",
+        },
+        { headers: corsHeaders(request) }
+      );
     }
 
     const sessions = await loadSessionsFromDB();

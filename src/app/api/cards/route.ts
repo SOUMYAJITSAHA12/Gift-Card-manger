@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     .from("cards")
     .insert({
       card_type: body.cardType || "flipkart",
-      card_number: body.cardNumber.trim(),
+      card_number: body.cardNumber.replace(/\s+/g, ""),
       pin: body.pin?.trim() || "",
       balance: body.balance,
       initial_amount: body.initialAmount,
@@ -95,7 +95,8 @@ export async function PATCH(request: NextRequest) {
 
   const dbUpdates: Record<string, unknown> = {};
   if (updates.cardType !== undefined) dbUpdates.card_type = updates.cardType;
-  if (updates.cardNumber !== undefined) dbUpdates.card_number = updates.cardNumber;
+  if (updates.cardNumber !== undefined)
+    dbUpdates.card_number = String(updates.cardNumber).replace(/\s+/g, "");
   if (updates.pin !== undefined) dbUpdates.pin = updates.pin;
   if (updates.balance !== undefined) dbUpdates.balance = updates.balance;
   if (updates.initialAmount !== undefined) dbUpdates.initial_amount = updates.initialAmount;
