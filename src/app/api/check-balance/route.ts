@@ -207,6 +207,8 @@ async function tryDirect(
       if (data.ERROR_MESSAGE) {
         return { success: false, error: data.ERROR_MESSAGE };
       }
+
+      lastError = `Unexpected Flipkart response (HTTP ${res.status}): ${raw.slice(0, 120)}`;
     } catch (err: unknown) {
       lastError = err instanceof Error ? err.message : "Could not reach Flipkart";
       continue;
