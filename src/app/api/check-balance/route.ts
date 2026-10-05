@@ -24,6 +24,35 @@ export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request) });
 }
 
+export async function GET(request: NextRequest) {
+  const jobId = request.nextUrl.searchParams.get("jobId");
+
+  if (!jobId) {
+    return NextResponse.json(
+      { error: "jobId is required" },
+      { status: 400, headers: corsHeaders(request) }
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("balance_jobs")
+    .select("status, result")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return NextResponse.json(
+      { status: "missing" },
+      { status: 404, headers: corsHeaders(request) }
+    );
+  }
+
+  return NextResponse.json(
+    { status: data.status, result: data.result ?? null },
+    { headers: corsHeaders(request) }
+  );
+}
+
 const FK_HEADERS = {
   "Content-Type": "application/json",
   Accept: "application/json",
@@ -76,6 +105,38 @@ async function loadSessionsFromDB(): Promise<string[]> {
 
 const CLOUDFLARE_PROXY_URL = process.env.CLOUDFLARE_PROXY_URL;
 const CLOUDFLARE_PROXY_SECRET = process.env.CLOUDFLARE_PROXY_SECRET;
+const HEARTBEAT_MAX_AGE_MS = 45000;
+
+async function homeCheckerIsAlive(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("app_config")
+    .select("value")
+    .eq("key", "home_checker_heartbeat")
+    .maybeSingle();
+
+  if (error || !data?.value) return false;
+  const beat = new Date(data.value).getTime();
+  return Number.isFinite(beat) && Date.now() - beat < HEARTBEAT_MAX_AGE_MS;
+}
+
+async function queueHomeJob(cardNumber: string): Promise<string | null> {
+  const { data: card } = await supabase
+    .from("cards")
+    .select("id")
+    .eq("card_number", cardNumber)
+    .maybeSingle();
+
+  if (!card) return null;
+
+  const { data: job, error } = await supabase
+    .from("balance_jobs")
+    .insert({ card_id: card.id, status: "pending" })
+    .select("id")
+    .single();
+
+  if (error || !job) return null;
+  return job.id;
+}
 
 async function tryViaProxy(
   cardNumber: string,
@@ -246,6 +307,17 @@ export async function POST(request: NextRequest) {
 
     const cleanCard = cardNumber.replace(/\s+/g, "");
     const cleanPin = pin.replace(/\s+/g, "");
+
+    // Flipkart rejects cloud networks, so hand the check to a home machine.
+    if (await homeCheckerIsAlive()) {
+      const jobId = await queueHomeJob(cleanCard);
+      if (jobId) {
+        return NextResponse.json(
+          { pending: true, jobId, cardNumber: cleanCard },
+          { headers: corsHeaders(request) }
+        );
+      }
+    }
 
     const sessions = await loadSessionsFromDB();
 

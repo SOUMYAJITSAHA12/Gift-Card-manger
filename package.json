@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "home-checker": "node --env-file=.env.local home-checker.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",

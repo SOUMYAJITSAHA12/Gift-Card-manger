@@ -40,40 +40,53 @@ export async function deleteCards(ids: string[]): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete cards");
 }
 
-const LOCAL_CHECKER = "http://127.0.0.1:3000/api/check-balance";
+const JOB_POLL_MS = 1500;
+const JOB_TIMEOUT_MS = 120000;
 
-async function postBalance(
-  url: string,
-  cardNumber: string,
-  pin: string,
-  timeoutMs?: number
+async function waitForJob(
+  jobId: string,
+  cardNumber: string
 ): Promise<BalanceCheckResult> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cardNumber, pin }),
-    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-  });
-  return res.json();
+  const deadline = Date.now() + JOB_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, JOB_POLL_MS));
+
+    const res = await fetch(
+      `/api/check-balance?jobId=${encodeURIComponent(jobId)}`
+    );
+    if (!res.ok) continue;
+
+    const data = await res.json();
+    if (data.status === "done" && data.result) {
+      return { ...data.result, cardNumber };
+    }
+  }
+
+  return {
+    success: false,
+    cardNumber,
+    error: "Timed out waiting for the home machine to answer",
+  };
 }
 
 export async function checkBalance(
   cardNumber: string,
   pin: string
 ): Promise<BalanceCheckResult> {
-  const host = typeof window !== "undefined" ? window.location.hostname : "";
-  const servedLocally = host === "localhost" || host === "127.0.0.1";
+  const res = await fetch("/api/check-balance", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cardNumber, pin }),
+  });
+  const data = await res.json();
 
-  // Flipkart only answers home networks, so prefer the app running on this LAN.
-  if (!servedLocally) {
-    try {
-      return await postBalance(LOCAL_CHECKER, cardNumber, pin, 5000);
-    } catch {
-      // Fall through to the hosted checker.
-    }
+  // Checks run on a home machine, so the answer arrives through polling.
+  if (data.pending && data.jobId) {
+    return waitForJob(data.jobId, data.cardNumber ?? cardNumber);
   }
 
-  return postBalance("/api/check-balance", cardNumber, pin);
+  return data;
 }
 
 export function computeStats(cards: GiftCard[]): DashboardStats {
