@@ -40,16 +40,40 @@ export async function deleteCards(ids: string[]): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete cards");
 }
 
+const LOCAL_CHECKER = "http://127.0.0.1:3000/api/check-balance";
+
+async function postBalance(
+  url: string,
+  cardNumber: string,
+  pin: string,
+  timeoutMs?: number
+): Promise<BalanceCheckResult> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cardNumber, pin }),
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+  });
+  return res.json();
+}
+
 export async function checkBalance(
   cardNumber: string,
   pin: string
 ): Promise<BalanceCheckResult> {
-  const res = await fetch("/api/check-balance", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cardNumber, pin }),
-  });
-  return res.json();
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
+  const servedLocally = host === "localhost" || host === "127.0.0.1";
+
+  // Flipkart only answers home networks, so prefer the app running on this LAN.
+  if (!servedLocally) {
+    try {
+      return await postBalance(LOCAL_CHECKER, cardNumber, pin, 5000);
+    } catch {
+      // Fall through to the hosted checker.
+    }
+  }
+
+  return postBalance("/api/check-balance", cardNumber, pin);
 }
 
 export function computeStats(cards: GiftCard[]): DashboardStats {
